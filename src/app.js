@@ -46,7 +46,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/candidate", candidateRoutes);
 
 // If no route found
-app.use("*", (req, res) => res.status(404).json({ message: "Route not found" }));
+app.get("*", (req, res) => res.status(404).json({ message: "Route not found" }));
 
 app.use((error, req, res, next) => {
   logger.error("Unhandled server error", { message: error.message, path: req.path });
