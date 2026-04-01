@@ -39,16 +39,12 @@ app.use(
 );
 app.use(express.json({ limit: "2mb" }));
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "Backend is running" });
-});
-
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/candidate", candidateRoutes);
 
 // API status route
-app.get("/", (request, response) => response.send(`Server is up and running at port ${process.env.PORT}`));
+app.get("/", (request, response) => response.send(`Test portal server is up and running at port ${process.env.PORT}`));
 
 // Error handler
 app.use((error, req, res, next) => {
