@@ -47,10 +47,10 @@ app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/candidate", candidateRoutes);
 
-app.use((req, res) => {
-  res.status(404).json({ message: "Route not found" });
-});
+// API status route
+app.get("/", (request, response) => response.send(`Server is up and running at port ${process.env.PORT}`));
 
+// Error handler
 app.use((error, req, res, next) => {
   logger.error("Unhandled server error", { message: error.message, path: req.path });
   res.status(500).json({ message: "Internal server error" });
