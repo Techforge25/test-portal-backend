@@ -39,14 +39,11 @@ app.use(
 );
 app.use(express.json({ limit: "2mb" }));
 
-app.get("/", (req, res) => res.json({ ok: true, message: `Test portal backend is up & running at port ${process.env.PORT}` }));
+app.get("/", (request, response) => response.send(`Test portal server is up and running at port ${process.env.PORT}`));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/candidate", candidateRoutes);
-
-// If no route found
-app.get("*", (req, res) => res.status(404).json({ message: "Route not found" }));
 
 app.use((error, req, res, next) => {
   logger.error("Unhandled server error", { message: error.message, path: req.path });
