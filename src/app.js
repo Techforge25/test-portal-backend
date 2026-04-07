@@ -7,10 +7,12 @@ const adminRoutes = require("./routes/adminRoutes");
 const candidateRoutes = require("./routes/candidateRoutes");
 
 const app = express();
-const allowedOrigins = String(process.env.CORS_ORIGINS || "")
+const allowedOriginSet = new Set(
+  String(process.env.CORS_ORIGINS || "")
   .split(",")
   .map((item) => item.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+);
 
 function isPrivateNetworkOrigin(origin = "") {
   return /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
@@ -22,7 +24,7 @@ app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (!allowedOrigins.length) {
+      if (!allowedOriginSet.size) {
         if (process.env.NODE_ENV === "production") {
           const error = new Error("CORS origins are not configured");
           error.statusCode = 500;
@@ -30,7 +32,7 @@ app.use(
         }
         return callback(null, true);
       }
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (allowedOriginSet.has(origin)) return callback(null, true);
       if (process.env.NODE_ENV !== "production" && isPrivateNetworkOrigin(origin)) {
         return callback(null, true);
       }

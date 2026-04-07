@@ -7,6 +7,9 @@ let redisConnection = null;
 let mode = "memory";
 let memoryProcessor = null;
 const memoryJobs = new Set();
+const memoryPendingJobs = [];
+let memoryActiveWorkers = 0;
+const MEMORY_CONCURRENCY = Math.max(1, Number(process.env.CODING_EVAL_MEMORY_CONCURRENCY || 1));
 
 function getRedisUrl() {
   const value = String(process.env.REDIS_URL || "").trim();
@@ -87,6 +90,24 @@ async function initCodingEvaluationQueue({ processor }) {
   }
 }
 
+function pumpMemoryQueue() {
+  if (!memoryProcessor) return;
+  while (memoryActiveWorkers < MEMORY_CONCURRENCY && memoryPendingJobs.length) {
+    const nextSubmissionId = memoryPendingJobs.shift();
+    if (!nextSubmissionId) continue;
+    memoryActiveWorkers += 1;
+    setImmediate(async () => {
+      try {
+        await memoryProcessor(nextSubmissionId);
+      } finally {
+        memoryJobs.delete(nextSubmissionId);
+        memoryActiveWorkers = Math.max(0, memoryActiveWorkers - 1);
+        pumpMemoryQueue();
+      }
+    });
+  }
+}
+
 async function enqueueCodingEvaluation(submissionId) {
   const id = String(submissionId || "");
   if (!id) return;
@@ -109,16 +130,31 @@ async function enqueueCodingEvaluation(submissionId) {
 
   if (!memoryProcessor || memoryJobs.has(id)) return;
   memoryJobs.add(id);
-  setImmediate(async () => {
-    try {
-      await memoryProcessor(id);
-    } finally {
-      memoryJobs.delete(id);
+  memoryPendingJobs.push(id);
+  pumpMemoryQueue();
+}
+
+async function shutdownCodingEvaluationQueue() {
+  try {
+    if (workerInstance) {
+      await workerInstance.close();
+      workerInstance = null;
     }
-  });
+    if (queueInstance) {
+      await queueInstance.close();
+      queueInstance = null;
+    }
+    if (redisConnection) {
+      await redisConnection.quit();
+      redisConnection = null;
+    }
+  } catch (error) {
+    logger.error("coding-eval queue shutdown failed", { message: error.message });
+  }
 }
 
 module.exports = {
   initCodingEvaluationQueue,
   enqueueCodingEvaluation,
+  shutdownCodingEvaluationQueue,
 };

@@ -101,6 +101,7 @@ const allowedSectionKeys = new Set([
   "short_answer",
   "long_answer",
   "scenario",
+  "ui_preview",
   "portfolio_link",
   "bug_report",
   "test_case",

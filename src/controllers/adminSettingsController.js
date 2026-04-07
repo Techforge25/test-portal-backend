@@ -1,5 +1,6 @@
 const { getAdminSettings } = require("../utils/adminNotifier");
 const { parsePositiveInt } = require("../utils/common");
+const { isCloudinaryReady, uploadBase64Image } = require("../services/cloudinaryService");
 
 async function getNotificationSettings(req, res) {
   try {
@@ -94,9 +95,52 @@ async function updateSecurityDefaults(req, res) {
   }
 }
 
+async function uploadUiPreviewImage(req, res) {
+  try {
+    const { dataUrl, fileName } = req.body || {};
+    if (typeof dataUrl !== "string" || !dataUrl.trim()) {
+      return res.status(400).json({ message: "dataUrl is required" });
+    }
+
+    if (!/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(dataUrl)) {
+      return res.status(400).json({ message: "Only base64 image data URLs are allowed" });
+    }
+
+    const maxBytes = parsePositiveInt(process.env.UI_PREVIEW_UPLOAD_MAX_BYTES, 1_500_000);
+    const base64Payload = dataUrl.split(",")[1] || "";
+    const uploadBytes = Buffer.byteLength(base64Payload, "base64");
+    if (!Number.isFinite(uploadBytes) || uploadBytes <= 0) {
+      return res.status(400).json({ message: "Invalid image payload" });
+    }
+    if (uploadBytes > maxBytes) {
+      return res.status(400).json({ message: `Image is too large. Max allowed is ${maxBytes} bytes` });
+    }
+
+    if (!isCloudinaryReady()) {
+      return res.status(500).json({
+        message:
+          "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.",
+      });
+    }
+
+    const upload = await uploadBase64Image(dataUrl, {
+      publicIdPrefix: `ui-preview-${String(fileName || "image").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32) || "image"}`,
+    });
+
+    return res.json({
+      message: "Image uploaded successfully",
+      url: upload.url,
+      publicId: upload.publicId,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to upload image" });
+  }
+}
+
 module.exports = {
   getNotificationSettings,
   updateNotificationSettings,
   getSecurityDefaults,
   updateSecurityDefaults,
+  uploadUiPreviewImage,
 };

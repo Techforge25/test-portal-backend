@@ -5,6 +5,7 @@ const {
   updateNotificationSettings,
   getSecurityDefaults,
   updateSecurityDefaults,
+  uploadUiPreviewImage,
 } = require("../controllers/adminSettingsController");
 const {
   listNotifications,
@@ -20,6 +21,7 @@ router.get("/settings/notifications", getNotificationSettings);
 router.patch("/settings/notifications", updateNotificationSettings);
 router.get("/settings/security-defaults", getSecurityDefaults);
 router.patch("/settings/security-defaults", updateSecurityDefaults);
+router.post("/settings/uploads/ui-preview-image", uploadUiPreviewImage);
 router.get("/notifications", listNotifications);
 router.patch("/notifications/read-all", markAllNotificationsRead);
 router.patch("/notifications/:id/read", markNotificationRead);

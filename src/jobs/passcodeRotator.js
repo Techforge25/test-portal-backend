@@ -44,6 +44,14 @@ async function startPasscodeRotator() {
   }, CHECK_INTERVAL_MS);
 }
 
+function stopPasscodeRotator() {
+  if (!intervalRef) return;
+  clearInterval(intervalRef);
+  intervalRef = null;
+  logger.info("passcode-rotator stopped");
+}
+
 module.exports = {
   startPasscodeRotator,
+  stopPasscodeRotator,
 };
