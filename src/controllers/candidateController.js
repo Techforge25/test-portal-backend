@@ -1,4 +1,3 @@
-const Test = require("../models/Test");
 const Submission = require("../models/Submission");
 const Violation = require("../models/Violation");
 const { notifyAdmins } = require("../utils/adminNotifier");
@@ -6,112 +5,28 @@ const { signCandidateSessionToken } = require("../utils/candidateSessionToken");
 const { logger } = require("../utils/logger");
 const {
   sanitizeEmail,
-  sanitizeCandidateProfile,
   validateRequiredCandidateProfile,
   validateCandidateProfileFormats,
   isValidMcqAnswers,
   isValidCodingAnswers,
+  isValidSectionAnswers,
 } = require("../validators/candidateValidators");
-
-const judge0BaseUrl = String(process.env.JUDGE0_BASE_URL || "https://ce.judge0.com").replace(/\/$/, "");
-
-const judge0LanguageMap = {
-  javascript: 63,
-  typescript: 74,
-  python: 71,
-  java: 62,
-  cpp: 54,
-};
-
-function parsePositiveInt(value, fallback) {
-  const parsed = Number.parseInt(String(value || ""), 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return parsed;
-}
-
-function publicTestShape(test) {
-  return {
-    id: test._id,
-    title: test.title,
-    position: test.position,
-    durationMinutes: test.durationMinutes,
-    passPercentage: test.passPercentage,
-    security: test.security,
-    mcqQuestions: (test.mcqQuestions || []).map((q, idx) => ({
-      index: idx,
-      question: q.question,
-      options: q.options.map((opt) => opt.text),
-      marks: q.marks,
-    })),
-    codingTasks: (test.codingTasks || []).map((task, idx) => ({
-      index: idx,
-      title: task.title,
-      description: task.description,
-      language: task.language,
-      marks: task.marks,
-      sampleInput: task.sampleInput,
-      sampleOutput: task.sampleOutput,
-    })),
-  };
-}
-
-async function findActiveTestByPasscode(passcode) {
-  return Test.findOne({
-    passcode: String(passcode || "").toUpperCase().trim(),
-    status: "active",
-    passcodeExpiresAt: { $gt: new Date() },
-  });
-}
-
-async function findLatestSubmission(testId, candidateEmail) {
-  return Submission.findOne({
-    test: testId,
-    candidateEmail: sanitizeEmail(candidateEmail),
-  }).sort({ createdAt: -1 });
-}
-
-function defaultNameFromEmail(email) {
-  const local = sanitizeEmail(email).split("@")[0] || "Candidate";
-  return local
-    .split(/[._-]/g)
-    .filter(Boolean)
-    .map((p) => p[0].toUpperCase() + p.slice(1))
-    .join(" ");
-}
-
-async function createOrResumeSubmission({ test, candidateEmail, candidateName, candidateProfile }) {
-  const normalizedEmail = sanitizeEmail(candidateEmail);
-  const profile = sanitizeCandidateProfile(candidateProfile);
-  const latest = await findLatestSubmission(test._id, normalizedEmail);
-
-  if (latest && latest.status === "in_progress") {
-    if (candidateName?.trim()) {
-      latest.candidateName = candidateName.trim();
-    }
-    latest.candidateProfile = {
-      ...(latest.candidateProfile || {}),
-      ...profile,
-    };
-    await latest.save();
-    return {
-      resumed: true,
-      submission: latest,
-    };
-  }
-
-  const created = await Submission.create({
-    test: test._id,
-    candidateName: candidateName?.trim() || defaultNameFromEmail(normalizedEmail),
-    candidateEmail: normalizedEmail,
-    candidateProfile: profile,
-    status: "in_progress",
-  });
-
-  return {
-    resumed: false,
-    submission: created,
-  };
-}
+const {
+  calculateMcqScore,
+  buildQueuedCodingEvaluation,
+  processSubmissionCodingEvaluation,
+  executeCode,
+} = require("../services/codingEvaluationService");
+const { enqueueCodingEvaluation } = require("../jobs/codingEvaluationQueue");
+const {
+  parsePositiveInt,
+  asBooleanEnv,
+  waitWithTimeout,
+  publicTestShape,
+  findActiveTestByPasscode,
+  createOrResumeSubmission,
+  findProfilePrefill,
+} = require("../services/candidateService");
 
 async function getTestByPasscode(req, res) {
   try {
@@ -120,8 +35,30 @@ async function getTestByPasscode(req, res) {
       return res.status(404).json({ message: "Active test not found for this passcode" });
     }
     return res.json({ test: publicTestShape(test) });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to fetch test" });
+  }
+}
+
+async function getCandidateProfilePrefill(req, res) {
+  try {
+    const candidateEmail = sanitizeEmail(req.query.candidateEmail);
+    const testPasscode = String(req.query.testPasscode || "").trim();
+
+    if (!candidateEmail) {
+      return res.status(400).json({ message: "candidateEmail is required" });
+    }
+
+    const latest = await findProfilePrefill({ candidateEmail, testPasscode });
+    if (!latest) return res.json({ found: false });
+
+    return res.json({
+      found: true,
+      candidateName: latest.candidateName || "",
+      candidateProfile: latest.candidateProfile || {},
+    });
+  } catch {
+    return res.status(500).json({ message: "Failed to fetch candidate profile prefill" });
   }
 }
 
@@ -181,7 +118,7 @@ async function loginWithPasscode(req, res) {
         startedAt: result.submission.startedAt,
       },
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to login candidate" });
   }
 }
@@ -189,71 +126,76 @@ async function loginWithPasscode(req, res) {
 async function saveDraftAnswers(req, res) {
   try {
     const { submissionId } = req.params;
-    const { mcqAnswers = [], codingAnswers = [] } = req.body;
-    if (!isValidMcqAnswers(mcqAnswers)) {
-      return res.status(400).json({ message: "Invalid MCQ answers payload" });
-    }
-    if (!isValidCodingAnswers(codingAnswers)) {
-      return res.status(400).json({ message: "Invalid coding answers payload" });
-    }
+    const { mcqAnswers = [], codingAnswers = [], sectionAnswers = [] } = req.body;
+    if (!isValidMcqAnswers(mcqAnswers)) return res.status(400).json({ message: "Invalid MCQ answers payload" });
+    if (!isValidCodingAnswers(codingAnswers)) return res.status(400).json({ message: "Invalid coding answers payload" });
+    if (!isValidSectionAnswers(sectionAnswers)) return res.status(400).json({ message: "Invalid section answers payload" });
 
     const submission = req.candidateSubmission || (await Submission.findById(submissionId));
-    if (!submission) {
-      return res.status(404).json({ message: "Submission not found" });
-    }
-    if (submission.status !== "in_progress") {
-      return res.status(400).json({ message: "Submission already finalized" });
-    }
+    if (!submission) return res.status(404).json({ message: "Submission not found" });
+    if (submission.status !== "in_progress") return res.status(400).json({ message: "Submission already finalized" });
 
     submission.mcqAnswers = mcqAnswers;
     submission.codingAnswers = codingAnswers;
+    submission.sectionAnswers = sectionAnswers;
     await submission.save();
-
     return res.json({ message: "Draft saved" });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to save draft" });
   }
-}
-
-function calculateMcqScore(test, mcqAnswers) {
-  let score = 0;
-  const answersByIndex = new Map();
-  (mcqAnswers || []).forEach((a) => answersByIndex.set(a.questionIndex, a.selectedOptionIndex));
-
-  test.mcqQuestions.forEach((q, index) => {
-    if (answersByIndex.get(index) === q.correctOptionIndex) {
-      score += q.marks || 1;
-    }
-  });
-  return score;
 }
 
 async function submitTest(req, res) {
   try {
     const { submissionId } = req.params;
-    const { mcqAnswers = [], codingAnswers = [], auto = false, endedReason = "" } = req.body;
-    if (!isValidMcqAnswers(mcqAnswers)) {
-      return res.status(400).json({ message: "Invalid MCQ answers payload" });
-    }
-    if (!isValidCodingAnswers(codingAnswers)) {
-      return res.status(400).json({ message: "Invalid coding answers payload" });
-    }
+    const {
+      mcqAnswers = [],
+      codingAnswers = [],
+      sectionAnswers = [],
+      auto = false,
+      endedReason = "",
+    } = req.body;
+    if (!isValidMcqAnswers(mcqAnswers)) return res.status(400).json({ message: "Invalid MCQ answers payload" });
+    if (!isValidCodingAnswers(codingAnswers)) return res.status(400).json({ message: "Invalid coding answers payload" });
+    if (!isValidSectionAnswers(sectionAnswers)) return res.status(400).json({ message: "Invalid section answers payload" });
 
     const submission = (await Submission.findById(submissionId).populate("test")) || null;
-    if (!submission) {
-      return res.status(404).json({ message: "Submission not found" });
-    }
-    if (submission.status !== "in_progress") {
-      return res.status(400).json({ message: "Submission already finalized" });
-    }
+    if (!submission) return res.status(404).json({ message: "Submission not found" });
+    if (submission.status !== "in_progress") return res.status(400).json({ message: "Submission already finalized" });
 
     submission.mcqAnswers = mcqAnswers;
     submission.codingAnswers = codingAnswers;
-    submission.totalScore = calculateMcqScore(submission.test, mcqAnswers);
+    submission.sectionAnswers = sectionAnswers;
+    const mcqScore = calculateMcqScore(submission.test, mcqAnswers);
+    submission.codingEvaluation = buildQueuedCodingEvaluation(submission.test, codingAnswers);
+    submission.totalScore = Number(mcqScore.toFixed(2));
     submission.status = auto ? "auto_submitted" : "submitted";
     submission.endedReason = endedReason || (auto ? "auto_end_triggered" : "submitted_by_candidate");
     submission.submittedAt = new Date();
     await submission.save();
+
+    const syncEvalEnabled = asBooleanEnv(process.env.CODING_EVAL_SYNC_ON_SUBMIT, true);
+    const syncEvalTimeoutMs = parsePositiveInt(process.env.CODING_EVAL_SYNC_TIMEOUT_MS, 8000);
+    const hasQueuedCoding = submission.codingEvaluation?.status === "queued";
+
+    if (hasQueuedCoding && syncEvalEnabled) {
+      try {
+        await waitWithTimeout(processSubmissionCodingEvaluation(String(submission._id)), syncEvalTimeoutMs);
+      } catch (error) {
+        logger.warn("sync coding evaluation skipped/fallback to queue", {
+          submissionId: String(submission._id),
+          message: String(error?.message || "sync evaluation failed"),
+        });
+      }
+    }
+
+    let freshSubmission = submission;
+    if (hasQueuedCoding) {
+      freshSubmission = (await Submission.findById(submission._id)) || submission;
+      if (freshSubmission.codingEvaluation?.status === "queued") {
+        await enqueueCodingEvaluation(String(submission._id));
+      }
+    }
 
     notifyAdmins("test_completed", {
       candidateName: submission.candidateName,
@@ -267,14 +209,47 @@ async function submitTest(req, res) {
     return res.json({
       message: "Submission completed",
       submission: {
-        id: submission._id,
-        status: submission.status,
-        totalScore: submission.totalScore,
-        submittedAt: submission.submittedAt,
+        id: freshSubmission._id,
+        status: freshSubmission.status,
+        totalScore: freshSubmission.totalScore,
+        submittedAt: freshSubmission.submittedAt,
+        codingEvaluation: freshSubmission.codingEvaluation,
       },
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to submit test" });
+  }
+}
+
+async function getEvaluationStatus(req, res) {
+  try {
+    const { submissionId } = req.params;
+    const submission = await Submission.findById(submissionId).populate("test");
+    if (!submission) return res.status(404).json({ message: "Submission not found" });
+    const evalState = submission.codingEvaluation || {
+      status: "not_required",
+      startedAt: null,
+      completedAt: null,
+      totalMarks: 0,
+      maxMarks: 0,
+      version: 1,
+      tasks: [],
+      error: "",
+    };
+    return res.json({
+      evaluation: {
+        status: evalState.status,
+        startedAt: evalState.startedAt,
+        completedAt: evalState.completedAt,
+        totalMarks: evalState.totalMarks || 0,
+        maxMarks: evalState.maxMarks || 0,
+        version: evalState.version || 1,
+        tasks: Array.isArray(evalState.tasks) ? evalState.tasks : [],
+        error: evalState.error || "",
+      },
+    });
+  } catch {
+    return res.status(500).json({ message: "Failed to fetch evaluation status" });
   }
 }
 
@@ -282,14 +257,10 @@ async function logViolation(req, res) {
   try {
     const { submissionId } = req.params;
     const { type, severity = "medium", actionTaken = "logged", meta = {} } = req.body;
-    if (!type) {
-      return res.status(400).json({ message: "type is required" });
-    }
+    if (!type) return res.status(400).json({ message: "type is required" });
 
     const submission = (await Submission.findById(submissionId).populate("test")) || null;
-    if (!submission) {
-      return res.status(404).json({ message: "Submission not found" });
-    }
+    if (!submission) return res.status(404).json({ message: "Submission not found" });
 
     const dedupMs = parsePositiveInt(process.env.VIOLATION_DEDUP_MS, 2500);
     const dedupSince = new Date(Date.now() - dedupMs);
@@ -342,75 +313,30 @@ async function logViolation(req, res) {
       warningLimit,
       shouldAutoEnd,
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to log violation" });
   }
-}
-
-function buildJudge0Headers() {
-  const headers = {
-    "Content-Type": "application/json",
-  };
-
-  if (process.env.JUDGE0_RAPIDAPI_KEY) {
-    headers["x-rapidapi-key"] = process.env.JUDGE0_RAPIDAPI_KEY;
-  }
-  if (process.env.JUDGE0_RAPIDAPI_HOST) {
-    headers["x-rapidapi-host"] = process.env.JUDGE0_RAPIDAPI_HOST;
-  }
-  if (process.env.JUDGE0_AUTH_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.JUDGE0_AUTH_TOKEN}`;
-  }
-
-  return headers;
 }
 
 async function runCode(req, res) {
   try {
     const { submissionId } = req.params;
     const { language, sourceCode, stdin = "" } = req.body || {};
-
     if (!sourceCode || !String(sourceCode).trim()) {
       return res.status(400).json({ message: "sourceCode is required" });
     }
 
-    const languageId = judge0LanguageMap[String(language || "").toLowerCase().trim()];
-    if (!languageId) {
-      return res.status(400).json({ message: "Unsupported language" });
-    }
-
     const submission = req.candidateSubmission || (await Submission.findById(submissionId));
-    if (!submission) {
-      return res.status(404).json({ message: "Submission not found" });
-    }
-    if (submission.status !== "in_progress") {
-      return res.status(400).json({ message: "Submission already finalized" });
-    }
+    if (!submission) return res.status(404).json({ message: "Submission not found" });
+    if (submission.status !== "in_progress") return res.status(400).json({ message: "Submission already finalized" });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    let response;
-    try {
-      response = await fetch(`${judge0BaseUrl}/submissions?base64_encoded=false&wait=true`, {
-        method: "POST",
-        headers: buildJudge0Headers(),
-        body: JSON.stringify({
-          language_id: languageId,
-          source_code: String(sourceCode),
-          stdin: String(stdin || ""),
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return res.status(502).json({
-        message: payload.message || payload.error || "Execution service request failed",
-      });
-    }
+    const payload = await executeCode({
+      language,
+      sourceCode: String(sourceCode),
+      stdin: String(stdin || ""),
+      timeLimitMs: 4000,
+      memoryLimitKb: 131072,
+    });
 
     return res.json({
       message: "Code executed",
@@ -425,18 +351,21 @@ async function runCode(req, res) {
       },
     });
   } catch (error) {
-    if (error?.name === "AbortError") {
-      return res.status(504).json({ message: "Code execution timed out" });
-    }
+    if (error?.name === "AbortError") return res.status(504).json({ message: "Code execution timed out" });
+    if (error?.code === "UNSUPPORTED_LANGUAGE") return res.status(400).json({ message: "Unsupported language" });
     return res.status(500).json({ message: "Failed to run code" });
   }
 }
 
 module.exports = {
   getTestByPasscode,
+  getCandidateProfilePrefill,
   loginWithPasscode,
   saveDraftAnswers,
   submitTest,
+  getEvaluationStatus,
   logViolation,
   runCode,
+  // used by queue inline worker bootstrap
+  processSubmissionCodingEvaluation,
 };

@@ -16,4 +16,7 @@ const adminNotificationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+adminNotificationSchema.index({ createdAt: -1 });
+adminNotificationSchema.index({ eventType: 1, createdAt: -1 });
+
 module.exports = mongoose.model("AdminNotification", adminNotificationSchema);

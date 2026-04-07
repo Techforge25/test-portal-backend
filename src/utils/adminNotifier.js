@@ -13,14 +13,6 @@ async function getAdminSettings() {
         newCandidate: true,
         violationAlert: true,
       },
-      branding: {
-        companyName: "Techforge Innovation",
-        logoDataUrl: "",
-      },
-      profile: {
-        name: "Alexa John",
-        avatarDataUrl: "",
-      },
       securityDefaults: {
         forceFullscreen: true,
         disableCopyPaste: true,
@@ -30,12 +22,6 @@ async function getAdminSettings() {
     });
   }
 
-  if (!settings.branding) {
-    settings.branding = { companyName: "Techforge Innovation", logoDataUrl: "" };
-  }
-  if (!settings.profile) {
-    settings.profile = { name: "Alexa John", avatarDataUrl: "" };
-  }
   if (!settings.securityDefaults) {
     settings.securityDefaults = {
       forceFullscreen: true,

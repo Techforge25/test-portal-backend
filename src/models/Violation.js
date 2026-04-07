@@ -13,5 +13,8 @@ const violationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+violationSchema.index({ submission: 1, type: 1, occurredAt: -1 });
+violationSchema.index({ severity: 1, occurredAt: -1 });
+
 module.exports = mongoose.model("Violation", violationSchema);
 

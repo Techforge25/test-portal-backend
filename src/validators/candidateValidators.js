@@ -97,6 +97,25 @@ function isValidCodingAnswers(codingAnswers) {
       && String(item.language).trim().length > 0);
 }
 
+const allowedSectionKeys = new Set([
+  "short_answer",
+  "long_answer",
+  "scenario",
+  "portfolio_link",
+  "bug_report",
+  "test_case",
+]);
+
+function isValidSectionAnswers(sectionAnswers) {
+  if (!Array.isArray(sectionAnswers)) return false;
+  return sectionAnswers.every((item) =>
+    allowedSectionKeys.has(String(item?.sectionKey || "").trim().toLowerCase()) &&
+    Number.isInteger(item?.itemIndex) &&
+    item.itemIndex >= 0 &&
+    typeof item?.answer === "string"
+  );
+}
+
 module.exports = {
   sanitizeEmail,
   sanitizeText,
@@ -105,5 +124,6 @@ module.exports = {
   validateCandidateProfileFormats,
   isValidMcqAnswers,
   isValidCodingAnswers,
+  isValidSectionAnswers,
 };
 

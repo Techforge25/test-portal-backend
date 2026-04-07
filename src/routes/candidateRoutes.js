@@ -1,9 +1,11 @@
 const express = require("express");
 const {
   getTestByPasscode,
+  getCandidateProfilePrefill,
   loginWithPasscode,
   saveDraftAnswers,
   submitTest,
+  getEvaluationStatus,
   logViolation,
   runCode,
 } = require("../controllers/candidateController");
@@ -23,9 +25,11 @@ const runCodeRateLimit = createRateLimiter({
 });
 
 router.get("/test/:passcode", getTestByPasscode);
+router.get("/profile-prefill", getCandidateProfilePrefill);
 router.post("/login-with-passcode", candidateLoginRateLimit, loginWithPasscode);
 router.post("/submission/:submissionId/draft", requireCandidateSubmissionAuth, saveDraftAnswers);
 router.post("/submission/:submissionId/submit", requireCandidateSubmissionAuth, submitTest);
+router.get("/submission/:submissionId/evaluation-status", requireCandidateSubmissionAuth, getEvaluationStatus);
 router.post("/submission/:submissionId/violation", requireCandidateSubmissionAuth, logViolation);
 router.post("/submission/:submissionId/run-code", runCodeRateLimit, requireCandidateSubmissionAuth, runCode);
 

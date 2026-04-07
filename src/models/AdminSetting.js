@@ -13,14 +13,6 @@ const adminSettingSchema = new mongoose.Schema(
       newCandidate: { type: Boolean, default: true },
       violationAlert: { type: Boolean, default: true },
     },
-    branding: {
-      companyName: { type: String, default: "Techforge Innovation", trim: true },
-      logoDataUrl: { type: String, default: "" },
-    },
-    profile: {
-      name: { type: String, default: "Alexa John", trim: true },
-      avatarDataUrl: { type: String, default: "" },
-    },
     securityDefaults: {
       forceFullscreen: { type: Boolean, default: true },
       disableCopyPaste: { type: Boolean, default: true },
