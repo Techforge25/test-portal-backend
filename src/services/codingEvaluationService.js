@@ -13,6 +13,7 @@ const judge0LanguageMap = {
   php: 68,
   ruby: 72,
   go: 60,
+  dart: 90,
 };
 
 function buildJudge0Headers() {
@@ -321,9 +322,10 @@ async function processSubmissionCodingEvaluation(submissionId) {
 
   try {
     const mcqScore = calculateMcqScore(submission.test, submission.mcqAnswers || []);
+    const sectionScore = Number(submission.sectionEvaluation?.totalMarks || 0);
     const codingEval = await evaluateCodingSubmission(submission.test, submission.codingAnswers || []);
     submission.codingEvaluation = codingEval.state;
-    submission.totalScore = Number((mcqScore + codingEval.totalMarks).toFixed(2));
+    submission.totalScore = Number((mcqScore + sectionScore + codingEval.totalMarks).toFixed(2));
     await submission.save();
   } catch (error) {
     submission.codingEvaluation = {

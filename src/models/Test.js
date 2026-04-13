@@ -71,6 +71,7 @@ const sectionConfigSchema = new mongoose.Schema(
     prompt: { type: String, default: "", trim: true },
     instructions: { type: String, default: "", trim: true },
     required: { type: Boolean, default: true },
+    marks: { type: Number, min: 1, default: 10 },
   },
   { _id: false }
 );
@@ -86,7 +87,7 @@ const testSchema = new mongoose.Schema(
     passcodeExpiresAt: { type: Date, default: Date.now, index: true },
     roleCategory: {
       type: String,
-      enum: ["developer", "designer", "video_editor", "qa_manual", "hr", "sales", "other"],
+      enum: ["developer", "frontend", "designer", "video_editor", "qa_manual", "hr", "sales", "other"],
       default: "developer",
       index: true,
     },

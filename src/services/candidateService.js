@@ -74,6 +74,12 @@ function publicTestShape(test) {
       prompt: section.prompt,
       instructions: section.instructions,
       required: section.required !== false,
+      marks:
+        section.key === "ui_preview"
+          ? Number.isFinite(Number(section.marks))
+            ? Number(section.marks)
+            : 10
+          : 0,
     })),
   };
 }
@@ -160,4 +166,3 @@ module.exports = {
   createOrResumeSubmission,
   findProfilePrefill,
 };
-

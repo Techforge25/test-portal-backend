@@ -58,6 +58,12 @@ function normalizeSectionConfigs(value) {
         prompt: String(item?.prompt || "").trim(),
         instructions: String(item?.instructions || "").trim(),
         required: item?.required !== false,
+        marks:
+          key === "ui_preview"
+            ? Number.isFinite(Number(item?.marks))
+              ? Math.max(1, Number(item.marks))
+              : 10
+            : 0,
       };
     })
     .filter(Boolean);

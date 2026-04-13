@@ -28,6 +28,126 @@ const {
   findProfilePrefill,
 } = require("../services/candidateService");
 
+const UI_PREVIEW_KEY = "ui_preview";
+const MANUAL_REVIEW_KEYS = new Set([
+  "short_answer",
+  "long_answer",
+  "scenario",
+  "portfolio_link",
+  "bug_report",
+  "test_case",
+]);
+
+function parseUiPreviewPayload(rawAnswer) {
+  try {
+    const parsed = JSON.parse(String(rawAnswer || ""));
+    return {
+      framework: String(parsed?.framework || ""),
+      html: String(parsed?.html || ""),
+      css: String(parsed?.css || ""),
+      js: String(parsed?.js || ""),
+      reactCode: String(parsed?.reactCode || ""),
+    };
+  } catch {
+    return {
+      framework: "",
+      html: "",
+      css: "",
+      js: "",
+      reactCode: String(rawAnswer || ""),
+    };
+  }
+}
+
+function evaluateUiPreviewAnswer(answer, maxMarks) {
+  const parsed = parseUiPreviewPayload(answer);
+  const hasReactCode = parsed.framework === "react_tailwind" && parsed.reactCode.trim().length > 0;
+  const hasHtmlCode =
+    parsed.framework === "html_css_js" &&
+    (parsed.html.trim().length > 0 || parsed.css.trim().length > 0 || parsed.js.trim().length > 0);
+  const hasCode = hasReactCode || hasHtmlCode || parsed.reactCode.trim().length > 0 || parsed.html.trim().length > 0;
+  if (!hasCode) {
+    return {
+      marksAwarded: 0,
+      status: "failed",
+      feedback: "No UI code submitted",
+    };
+  }
+
+  let scoreRatio = 0.35;
+  if (hasReactCode || hasHtmlCode) scoreRatio += 0.3;
+  if ((parsed.reactCode || parsed.html).length >= 120) scoreRatio += 0.2;
+  if ((parsed.css || "").length >= 40 || (parsed.reactCode || "").includes("className=")) scoreRatio += 0.15;
+  scoreRatio = Math.max(0, Math.min(1, scoreRatio));
+  return {
+    marksAwarded: Number((maxMarks * scoreRatio).toFixed(2)),
+    status: "completed",
+    feedback: "UI preview auto-evaluated",
+  };
+}
+
+function buildSectionEvaluation(test, sectionAnswers) {
+  const configs = Array.isArray(test?.sectionConfigs) ? test.sectionConfigs : [];
+  if (!configs.length) {
+    return { status: "not_required", totalMarks: 0, maxMarks: 0, items: [] };
+  }
+  const answerByKey = new Map(
+    (Array.isArray(sectionAnswers) ? sectionAnswers : []).map((item) => [
+      `${item.sectionKey}::${item.itemIndex}`,
+      String(item.answer || ""),
+    ])
+  );
+
+  const items = configs.map((section, itemIndex) => {
+    const key = String(section?.key || "");
+    const title = section?.title || key;
+    const answer = answerByKey.get(`${key}::${itemIndex}`) || "";
+    if (key === UI_PREVIEW_KEY) {
+      const maxMarks = Number.isFinite(Number(section?.marks)) ? Math.max(1, Number(section.marks)) : 10;
+      const result = evaluateUiPreviewAnswer(answer, maxMarks);
+      return {
+        sectionKey: key,
+        itemIndex,
+        title,
+        marksAwarded: result.marksAwarded,
+        maxMarks,
+        status: result.status,
+        feedback: result.feedback,
+      };
+    }
+    if (MANUAL_REVIEW_KEYS.has(key)) {
+      return {
+        sectionKey: key,
+        itemIndex,
+        title,
+        marksAwarded: 0,
+        maxMarks: 0,
+        status: "under_review",
+        feedback: "Manual review required",
+      };
+    }
+    return {
+      sectionKey: key,
+      itemIndex,
+      title,
+      marksAwarded: 0,
+      maxMarks: 0,
+      status: "under_review",
+      feedback: "",
+    };
+  });
+
+  const totalMarks = Number(items.reduce((sum, item) => sum + Number(item.marksAwarded || 0), 0).toFixed(2));
+  const maxMarks = Number(items.reduce((sum, item) => sum + Number(item.maxMarks || 0), 0).toFixed(2));
+  const hasAutoItems = items.some((item) => item.sectionKey === UI_PREVIEW_KEY);
+  return {
+    status: hasAutoItems ? "completed" : "pending_review",
+    totalMarks,
+    maxMarks,
+    items,
+  };
+}
+
 async function getTestByPasscode(req, res) {
   try {
     const test = await findActiveTestByPasscode(req.params.passcode);
@@ -167,8 +287,13 @@ async function submitTest(req, res) {
     submission.codingAnswers = codingAnswers;
     submission.sectionAnswers = sectionAnswers;
     const mcqScore = calculateMcqScore(submission.test, mcqAnswers);
+    const mcqTotal = (submission.test?.mcqQuestions || []).reduce(
+      (sum, item) => sum + Number(item?.marks || 1),
+      0
+    );
+    submission.sectionEvaluation = buildSectionEvaluation(submission.test, sectionAnswers);
     submission.codingEvaluation = buildQueuedCodingEvaluation(submission.test, codingAnswers);
-    submission.totalScore = Number(mcqScore.toFixed(2));
+    submission.totalScore = Number((mcqScore + Number(submission.sectionEvaluation?.totalMarks || 0)).toFixed(2));
     submission.status = auto ? "auto_submitted" : "submitted";
     submission.endedReason = endedReason || (auto ? "auto_end_triggered" : "submitted_by_candidate");
     submission.submittedAt = new Date();
@@ -212,8 +337,11 @@ async function submitTest(req, res) {
         id: freshSubmission._id,
         status: freshSubmission.status,
         totalScore: freshSubmission.totalScore,
+        mcqScore: Number(mcqScore || 0),
+        mcqTotal: Number(mcqTotal || 0),
         submittedAt: freshSubmission.submittedAt,
         codingEvaluation: freshSubmission.codingEvaluation,
+        sectionEvaluation: freshSubmission.sectionEvaluation,
       },
     });
   } catch {
@@ -236,6 +364,12 @@ async function getEvaluationStatus(req, res) {
       tasks: [],
       error: "",
     };
+    const sectionEval = submission.sectionEvaluation || {
+      status: "not_required",
+      totalMarks: 0,
+      maxMarks: 0,
+      items: [],
+    };
     return res.json({
       evaluation: {
         status: evalState.status,
@@ -246,6 +380,14 @@ async function getEvaluationStatus(req, res) {
         version: evalState.version || 1,
         tasks: Array.isArray(evalState.tasks) ? evalState.tasks : [],
         error: evalState.error || "",
+        sectionEvaluation: sectionEval,
+        mcqScore: Number(calculateMcqScore(submission.test, submission.mcqAnswers || []) || 0),
+        mcqTotal: Number(
+          (submission.test?.mcqQuestions || []).reduce(
+            (sum, item) => sum + Number(item?.marks || 1),
+            0
+          )
+        ),
       },
     });
   } catch {

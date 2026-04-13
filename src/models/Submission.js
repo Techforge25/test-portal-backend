@@ -66,6 +66,35 @@ const sectionAnswerSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const sectionEvaluationItemSchema = new mongoose.Schema(
+  {
+    sectionKey: {
+      type: String,
+      enum: [
+        "short_answer",
+        "long_answer",
+        "scenario",
+        "ui_preview",
+        "portfolio_link",
+        "bug_report",
+        "test_case",
+      ],
+      required: true,
+    },
+    itemIndex: { type: Number, required: true, min: 0 },
+    title: { type: String, default: "" },
+    marksAwarded: { type: Number, default: 0, min: 0 },
+    maxMarks: { type: Number, default: 0, min: 0 },
+    status: {
+      type: String,
+      enum: ["under_review", "completed", "failed"],
+      default: "under_review",
+    },
+    feedback: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 const submissionSchema = new mongoose.Schema(
   {
     test: { type: mongoose.Schema.Types.ObjectId, ref: "Test", required: true, index: true },
@@ -109,6 +138,16 @@ const submissionSchema = new mongoose.Schema(
       version: { type: Number, default: 1 },
       tasks: { type: [codingEvaluationTaskResultSchema], default: [] },
       error: { type: String, default: "" },
+    },
+    sectionEvaluation: {
+      status: {
+        type: String,
+        enum: ["not_required", "pending_review", "completed"],
+        default: "not_required",
+      },
+      totalMarks: { type: Number, default: 0, min: 0 },
+      maxMarks: { type: Number, default: 0, min: 0 },
+      items: { type: [sectionEvaluationItemSchema], default: [] },
     },
     warningCount: { type: Number, default: 0 },
     totalScore: { type: Number, default: 0 },

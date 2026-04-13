@@ -6,7 +6,11 @@ const { toObjectIdString, toIsoDateTime, parsePositiveInt, paginateRows } = requ
 function getTotalMarks(test) {
   const mcqTotal = (test?.mcqQuestions || []).reduce((sum, item) => sum + (item.marks || 1), 0);
   const codingTotal = (test?.codingTasks || []).reduce((sum, item) => sum + (item.marks || 0), 0);
-  return mcqTotal + codingTotal;
+  const sectionTotal = (test?.sectionConfigs || []).reduce(
+    (sum, item) => sum + (item?.key === "ui_preview" ? Number(item?.marks || 0) : 0),
+    0
+  );
+  return mcqTotal + codingTotal + sectionTotal;
 }
 
 function getMcqScoreAndPercent(submission) {
@@ -60,11 +64,47 @@ function getCodingScoreSummary(submission) {
   return { score, total: normalizedTotal, percent };
 }
 
+function getSectionScoreSummary(submission) {
+  const sections = submission.test?.sectionConfigs || [];
+  if (!sections.length) return { score: 0, total: 0, percent: 0 };
+
+  const reviews = submission.review?.sectionReviews || [];
+  const reviewsByKey = new Map(
+    reviews.map((item) => [`${item.sectionKey}::${item.itemIndex}`, item])
+  );
+  const autoItems = submission.sectionEvaluation?.items || [];
+  const autoByKey = new Map(
+    autoItems.map((item) => [`${item.sectionKey}::${item.itemIndex}`, item])
+  );
+
+  let score = 0;
+  let total = 0;
+  sections.forEach((section, index) => {
+    const maxMarks = section?.key === "ui_preview" ? Number(section?.marks || 0) : 0;
+    total += maxMarks;
+    if (maxMarks <= 0) return;
+    const key = `${section.key}::${index}`;
+    const review = reviewsByKey.get(key);
+    const auto = autoByKey.get(key);
+    if (Number.isFinite(review?.marksAwarded)) {
+      score += Number(review.marksAwarded);
+      return;
+    }
+    if (Number.isFinite(auto?.marksAwarded)) {
+      score += Number(auto.marksAwarded);
+    }
+  });
+
+  const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+  return { score, total, percent };
+}
+
 function getOverallScoreAndPercent(submission) {
   const mcq = getMcqScoreAndPercent(submission);
   const coding = getCodingScoreSummary(submission);
-  const totalScore = mcq.score + coding.score;
-  const totalMarks = mcq.total + coding.total;
+  const section = getSectionScoreSummary(submission);
+  const totalScore = mcq.score + coding.score + section.score;
+  const totalMarks = mcq.total + coding.total + section.total;
   const percent = totalMarks > 0 ? Math.round((totalScore / totalMarks) * 100) : 0;
   return {
     score: totalScore,
@@ -72,6 +112,7 @@ function getOverallScoreAndPercent(submission) {
     percent,
     mcq,
     coding,
+    section,
   };
 }
 
@@ -310,16 +351,24 @@ async function loadReviewSubmissionDetail({ userId, submissionId }) {
   const sectionRows = (submission.test?.sectionConfigs || []).map((section, index) => {
     const key = sectionAnswersKey(section.key, index);
     const review = sectionReviewsByKey.get(key);
+    const auto = (submission.sectionEvaluation?.items || []).find(
+      (item) => item.sectionKey === section.key && item.itemIndex === index
+    );
+    const maxMarks = section.key === "ui_preview" ? Number(section.marks || 0) : 0;
     return {
       sectionKey: section.key,
       itemIndex: index,
       title: section.title || section.key,
       prompt: section.prompt || "",
       answer: sectionAnswersByKey.get(key) || "",
-      maxMarks: 10,
-      marksAwarded: Number.isFinite(review?.marksAwarded) ? review.marksAwarded : 0,
-      status: review?.status || "Under Review",
-      feedback: review?.feedback || "",
+      maxMarks,
+      marksAwarded: Number.isFinite(review?.marksAwarded)
+        ? review.marksAwarded
+        : Number.isFinite(auto?.marksAwarded)
+          ? auto.marksAwarded
+          : 0,
+      status: review?.status || (auto?.status === "completed" ? "Passed" : "Under Review"),
+      feedback: review?.feedback || auto?.feedback || "",
     };
   });
 
@@ -420,7 +469,8 @@ async function persistReviewDecision({ userId, submissionId, payload }) {
       const section = submission.test?.sectionConfigs?.[itemIndex];
       if (!section || section.key !== sectionKey) return null;
       const rawMarks = Number(item?.marksAwarded || 0);
-      const marksAwarded = Number.isFinite(rawMarks) ? Math.max(0, Math.min(10, rawMarks)) : 0;
+      const maxMarks = Number(section?.marks || 0);
+      const marksAwarded = Number.isFinite(rawMarks) ? Math.max(0, Math.min(maxMarks, rawMarks)) : 0;
       const allowedStatus = ["Under Review", "Passed", "Failed", "On Hold"];
       const status = allowedStatus.includes(String(item?.status || "")) ? String(item.status) : "Under Review";
       return {
