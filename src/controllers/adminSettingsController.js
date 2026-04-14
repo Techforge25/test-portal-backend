@@ -1,6 +1,33 @@
 const { getAdminSettings } = require("../utils/adminNotifier");
 const { parsePositiveInt } = require("../utils/common");
-const { isCloudinaryReady, uploadBase64Image } = require("../services/cloudinaryService");
+const {
+  isCloudinaryReady,
+  uploadBase64Image,
+  uploadBase64Pdf,
+} = require("../services/cloudinaryService");
+const { emitAdmin, emitAdminDataChanged } = require("../realtime/socketServer");
+
+function requireCloudinary(res) {
+  if (isCloudinaryReady()) return true;
+  res.status(500).json({
+    message:
+      "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.",
+  });
+  return false;
+}
+
+function extractBase64Bytes(dataUrl) {
+  const base64Payload = String(dataUrl || "").split(",")[1] || "";
+  const uploadBytes = Buffer.byteLength(base64Payload, "base64");
+  return Number.isFinite(uploadBytes) ? uploadBytes : 0;
+}
+
+function sanitizePublicIdPart(fileName, fallback) {
+  const value = String(fileName || "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 32);
+  return value || fallback;
+}
 
 async function getNotificationSettings(req, res) {
   try {
@@ -12,7 +39,7 @@ async function getNotificationSettings(req, res) {
         violationAlert: Boolean(settings.notifications?.violationAlert),
       },
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to load notification settings" });
   }
 }
@@ -35,12 +62,14 @@ async function updateNotificationSettings(req, res) {
       violationAlert,
     };
     await settings.save();
+    emitAdmin("admin:notifications.updated", { action: "settings_updated" });
+    emitAdminDataChanged({ source: "notification_settings_updated" });
 
     return res.json({
       message: "Notification settings saved",
       notifications: settings.notifications,
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to save notification settings" });
   }
 }
@@ -85,6 +114,7 @@ async function updateSecurityDefaults(req, res) {
       autoSaveInterval: autosave,
     };
     await settings.save();
+    emitAdminDataChanged({ source: "security_defaults_updated" });
 
     return res.json({
       message: "Security defaults saved",
@@ -107,24 +137,18 @@ async function uploadUiPreviewImage(req, res) {
     }
 
     const maxBytes = parsePositiveInt(process.env.UI_PREVIEW_UPLOAD_MAX_BYTES, 1_500_000);
-    const base64Payload = dataUrl.split(",")[1] || "";
-    const uploadBytes = Buffer.byteLength(base64Payload, "base64");
-    if (!Number.isFinite(uploadBytes) || uploadBytes <= 0) {
+    const uploadBytes = extractBase64Bytes(dataUrl);
+    if (!uploadBytes) {
       return res.status(400).json({ message: "Invalid image payload" });
     }
     if (uploadBytes > maxBytes) {
       return res.status(400).json({ message: `Image is too large. Max allowed is ${maxBytes} bytes` });
     }
 
-    if (!isCloudinaryReady()) {
-      return res.status(500).json({
-        message:
-          "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.",
-      });
-    }
+    if (!requireCloudinary(res)) return;
 
     const upload = await uploadBase64Image(dataUrl, {
-      publicIdPrefix: `ui-preview-${String(fileName || "image").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32) || "image"}`,
+      publicIdPrefix: `ui-preview-${sanitizePublicIdPart(fileName, "image")}`,
     });
 
     return res.json({
@@ -132,8 +156,44 @@ async function uploadUiPreviewImage(req, res) {
       url: upload.url,
       publicId: upload.publicId,
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: "Failed to upload image" });
+  }
+}
+
+async function uploadUiTaskPdf(req, res) {
+  try {
+    const { dataUrl, fileName } = req.body || {};
+    if (typeof dataUrl !== "string" || !dataUrl.trim()) {
+      return res.status(400).json({ message: "dataUrl is required" });
+    }
+
+    if (!/^data:application\/pdf;base64,/.test(dataUrl)) {
+      return res.status(400).json({ message: "Only base64 PDF data URLs are allowed" });
+    }
+
+    const maxBytes = parsePositiveInt(process.env.UI_TASK_PDF_UPLOAD_MAX_BYTES, 5_000_000);
+    const uploadBytes = extractBase64Bytes(dataUrl);
+    if (!uploadBytes) {
+      return res.status(400).json({ message: "Invalid PDF payload" });
+    }
+    if (uploadBytes > maxBytes) {
+      return res.status(400).json({ message: `PDF is too large. Max allowed is ${maxBytes} bytes` });
+    }
+
+    if (!requireCloudinary(res)) return;
+
+    const upload = await uploadBase64Pdf(dataUrl, {
+      publicIdPrefix: `ui-task-${sanitizePublicIdPart(fileName, "document")}`,
+    });
+
+    return res.json({
+      message: "PDF uploaded successfully",
+      url: upload.url,
+      publicId: upload.publicId,
+    });
+  } catch {
+    return res.status(500).json({ message: "Failed to upload PDF" });
   }
 }
 
@@ -143,4 +203,5 @@ module.exports = {
   getSecurityDefaults,
   updateSecurityDefaults,
   uploadUiPreviewImage,
+  uploadUiTaskPdf,
 };

@@ -1,6 +1,14 @@
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return JSON.stringify({ message: "Unable to stringify log metadata" });
+  }
+}
+
 function log(level, message, meta) {
   const ts = new Date().toISOString();
-  const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
+  const suffix = meta ? ` ${safeStringify(meta)}` : "";
   if (level === "error") {
     // eslint-disable-next-line no-console
     console.error(`[${ts}] [${level}] ${message}${suffix}`);

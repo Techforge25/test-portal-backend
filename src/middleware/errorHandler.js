@@ -17,8 +17,10 @@ function errorHandler(error, req, res, next) {
   logger.error("Unhandled server error", {
     status,
     message: String(error?.message || "Unknown error"),
+    code: String(error?.code || ""),
     path: req.path,
     method: req.method,
+    stack: process.env.NODE_ENV === "production" ? undefined : error?.stack,
   });
 
   return res.status(status).json({ message });
@@ -28,4 +30,3 @@ module.exports = {
   notFoundHandler,
   errorHandler,
 };
-

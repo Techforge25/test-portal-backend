@@ -2,6 +2,7 @@ const User = require("../models/User");
 const AdminSetting = require("../models/AdminSetting");
 const AdminNotification = require("../models/AdminNotification");
 const { sendEmail } = require("./emailService");
+const { emitAdmin, emitAdminDataChanged } = require("../realtime/socketServer");
 
 async function getAdminSettings() {
   let settings = await AdminSetting.findOne({ key: "default" });
@@ -79,11 +80,20 @@ function buildInAppNotification(event, payload) {
 
 async function notifyAdmins(event, payload) {
   const inApp = buildInAppNotification(event, payload);
-  await AdminNotification.create({
+  const savedNotification = await AdminNotification.create({
     eventType: event,
     title: inApp.title,
     message: inApp.message,
     metadata: payload || {},
+  });
+  emitAdmin("admin:notifications.updated", {
+    action: "created",
+    notificationId: String(savedNotification._id),
+    eventType: event,
+  });
+  emitAdminDataChanged({
+    source: "notification_created",
+    eventType: event,
   });
 
   const settings = await getAdminSettings();

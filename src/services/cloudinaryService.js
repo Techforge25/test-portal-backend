@@ -50,8 +50,31 @@ async function uploadBase64Image(dataUrl, options = {}) {
   };
 }
 
+async function uploadBase64Pdf(dataUrl, options = {}) {
+  ensureCloudinaryConfigured();
+  if (!configured) {
+    throw new Error("Cloudinary is not configured on server");
+  }
+
+  const folder = options.folder || process.env.CLOUDINARY_UI_TASK_PDF_FOLDER || "test-portal/ui-task-pdf";
+  const publicIdPrefix = options.publicIdPrefix || "ui-task-pdf";
+
+  const result = await cloudinary.uploader.upload(dataUrl, {
+    folder,
+    resource_type: "raw",
+    public_id: `${publicIdPrefix}-${Date.now()}`,
+    overwrite: true,
+    format: "pdf",
+  });
+
+  return {
+    url: result.secure_url,
+    publicId: result.public_id,
+  };
+}
+
 module.exports = {
   isCloudinaryReady,
   uploadBase64Image,
+  uploadBase64Pdf,
 };
-

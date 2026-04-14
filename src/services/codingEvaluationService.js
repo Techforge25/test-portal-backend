@@ -1,4 +1,5 @@
 const Submission = require("../models/Submission");
+const { emitAdminDataChanged, emitCandidateEvaluationUpdated } = require("../realtime/socketServer");
 
 const judge0BaseUrl = String(process.env.JUDGE0_BASE_URL || "https://ce.judge0.com").replace(/\/$/, "");
 
@@ -319,6 +320,10 @@ async function processSubmissionCodingEvaluation(submissionId) {
     error: "",
   };
   await submission.save();
+  emitCandidateEvaluationUpdated(String(submission._id), {
+    action: "coding_evaluation_running",
+    submissionId: String(submission._id),
+  });
 
   try {
     const mcqScore = calculateMcqScore(submission.test, submission.mcqAnswers || []);
@@ -327,6 +332,14 @@ async function processSubmissionCodingEvaluation(submissionId) {
     submission.codingEvaluation = codingEval.state;
     submission.totalScore = Number((mcqScore + sectionScore + codingEval.totalMarks).toFixed(2));
     await submission.save();
+    emitCandidateEvaluationUpdated(String(submission._id), {
+      action: "coding_evaluation_completed",
+      submissionId: String(submission._id),
+    });
+    emitAdminDataChanged({
+      source: "coding_evaluation_completed",
+      submissionId: String(submission._id),
+    });
   } catch (error) {
     submission.codingEvaluation = {
       ...(submission.codingEvaluation || {}),
@@ -335,6 +348,14 @@ async function processSubmissionCodingEvaluation(submissionId) {
       error: String(error?.message || "Evaluation failed"),
     };
     await submission.save();
+    emitCandidateEvaluationUpdated(String(submission._id), {
+      action: "coding_evaluation_failed",
+      submissionId: String(submission._id),
+    });
+    emitAdminDataChanged({
+      source: "coding_evaluation_failed",
+      submissionId: String(submission._id),
+    });
   }
 }
 

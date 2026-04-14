@@ -1,15 +1,16 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const { parseBearerToken } = require("../utils/token");
+const { getRequiredEnv } = require("../config/env");
 
 async function auth(req, res, next) {
   try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const token = parseBearerToken(req.headers.authorization || "");
     if (!token) {
       return res.status(401).json({ message: "Unauthorized: token missing" });
     }
 
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, getRequiredEnv("JWT_SECRET"));
     const user = await User.findById(payload.userId).select("_id name email role");
     if (!user) {
       return res.status(401).json({ message: "Unauthorized: user not found" });

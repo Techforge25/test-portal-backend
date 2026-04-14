@@ -1,4 +1,5 @@
 require("dotenv").config();
+const http = require("http");
 const app = require("./app");
 const mongoose = require("mongoose");
 const { connectDB } = require("./config/db");
@@ -6,10 +7,13 @@ const { bootstrapSuperAdmin } = require("./config/bootstrapSuperAdmin");
 const { startPasscodeRotator, stopPasscodeRotator } = require("./jobs/passcodeRotator");
 const { initCodingEvaluationQueue, shutdownCodingEvaluationQueue } = require("./jobs/codingEvaluationQueue");
 const { processSubmissionCodingEvaluation } = require("./controllers/candidateController");
+const { initSocketServer } = require("./realtime/socketServer");
+const { startRealtimeChangeStreamWatcher, stopRealtimeChangeStreamWatcher } = require("./realtime/changeStreamWatcher");
 const { logger } = require("./utils/logger");
+const { getServerHost, getServerPort } = require("./config/env");
 
-const port = Number(process.env.PORT || 5000);
-const host = process.env.HOST || "0.0.0.0";
+const port = getServerPort();
+const host = getServerHost();
 let serverInstance = null;
 let isShuttingDown = false;
 
@@ -20,6 +24,7 @@ async function gracefulShutdown(signal) {
 
   try {
     stopPasscodeRotator();
+    await stopRealtimeChangeStreamWatcher();
     await shutdownCodingEvaluationQueue();
     if (serverInstance) {
       await new Promise((resolve) => serverInstance.close(resolve));
@@ -42,7 +47,10 @@ async function start() {
       processor: processSubmissionCodingEvaluation,
     });
     await startPasscodeRotator();
-    serverInstance = app.listen(port, host, () => {
+    const httpServer = http.createServer(app);
+    initSocketServer(httpServer);
+    await startRealtimeChangeStreamWatcher();
+    serverInstance = httpServer.listen(port, host, () => {
       logger.info("Backend running", { url: `http://${host}:${port}` });
     });
   } catch (error) {

@@ -27,6 +27,11 @@ const {
   createOrResumeSubmission,
   findProfilePrefill,
 } = require("../services/candidateService");
+const {
+  emitAdmin,
+  emitAdminDataChanged,
+  emitCandidateEvaluationUpdated,
+} = require("../realtime/socketServer");
 
 const UI_PREVIEW_KEY = "ui_preview";
 const MANUAL_REVIEW_KEYS = new Set([
@@ -259,6 +264,10 @@ async function saveDraftAnswers(req, res) {
     submission.codingAnswers = codingAnswers;
     submission.sectionAnswers = sectionAnswers;
     await submission.save();
+    emitCandidateEvaluationUpdated(String(submission._id), {
+      action: "draft_saved",
+      submissionId: String(submission._id),
+    });
     return res.json({ message: "Draft saved" });
   } catch {
     return res.status(500).json({ message: "Failed to save draft" });
@@ -298,6 +307,22 @@ async function submitTest(req, res) {
     submission.endedReason = endedReason || (auto ? "auto_end_triggered" : "submitted_by_candidate");
     submission.submittedAt = new Date();
     await submission.save();
+    emitCandidateEvaluationUpdated(String(submission._id), {
+      action: "submitted",
+      submissionId: String(submission._id),
+    });
+    emitAdmin("admin:reviews.updated", {
+      action: "submission_created",
+      submissionId: String(submission._id),
+    });
+    emitAdmin("admin:candidates.updated", {
+      action: "submission_created",
+      submissionId: String(submission._id),
+    });
+    emitAdminDataChanged({
+      source: "submission_created",
+      submissionId: String(submission._id),
+    });
 
     const syncEvalEnabled = asBooleanEnv(process.env.CODING_EVAL_SYNC_ON_SUBMIT, true);
     const syncEvalTimeoutMs = parsePositiveInt(process.env.CODING_EVAL_SYNC_TIMEOUT_MS, 8000);
@@ -447,6 +472,15 @@ async function logViolation(req, res) {
         logger.warn("high_violation notification failed", { message: error.message });
       });
     }
+    emitAdmin("admin:violations.updated", {
+      action: "violation_logged",
+      submissionId: String(submission._id),
+      severity: String(severity || "medium").toLowerCase(),
+    });
+    emitAdminDataChanged({
+      source: "violation_logged",
+      submissionId: String(submission._id),
+    });
 
     return res.status(201).json({
       message: "Violation logged",

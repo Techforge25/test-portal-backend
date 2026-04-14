@@ -1,8 +1,10 @@
 const Test = require("../models/Test");
 const { getNextPasscodeExpiry, getUniquePasscode } = require("../utils/passcodeService");
+const { emitAdmin, emitAdminDataChanged } = require("../realtime/socketServer");
 
 const ALLOWED_ROLE_CATEGORIES = new Set([
   "developer",
+  "frontend",
   "designer",
   "video_editor",
   "qa_manual",
@@ -63,7 +65,7 @@ function normalizeSectionConfigs(value) {
             ? Number.isFinite(Number(item?.marks))
               ? Math.max(1, Number(item.marks))
               : 10
-            : 0,
+            : 1,
       };
     })
     .filter(Boolean);
@@ -160,6 +162,8 @@ async function createTest(req, res) {
       passcodeExpiresAt: getNextPasscodeExpiry(now),
       createdBy: req.user._id,
     });
+    emitAdmin("admin:tests.updated", { action: "created", testId: String(doc._id) });
+    emitAdminDataChanged({ source: "test_created", testId: String(doc._id) });
 
     return res.status(201).json({ message: "Test created", test: doc });
   } catch (error) {
@@ -238,6 +242,8 @@ async function updateTest(req, res) {
     if (!updated) {
       return res.status(404).json({ message: "Test not found" });
     }
+    emitAdmin("admin:tests.updated", { action: "updated", testId: String(updated._id) });
+    emitAdminDataChanged({ source: "test_updated", testId: String(updated._id) });
     return res.json({ message: "Test updated", test: updated });
   } catch (error) {
     return res.status(500).json({ message: "Failed to update test" });
@@ -267,6 +273,8 @@ async function updateTestStatus(req, res) {
     if (!updated) {
       return res.status(404).json({ message: "Test not found" });
     }
+    emitAdmin("admin:tests.updated", { action: "status_changed", testId: String(updated._id) });
+    emitAdminDataChanged({ source: "test_status_updated", testId: String(updated._id) });
     return res.json({ message: "Status updated", test: updated });
   } catch (error) {
     return res.status(500).json({ message: "Failed to update status" });
@@ -279,6 +287,8 @@ async function deleteTest(req, res) {
     if (!deleted) {
       return res.status(404).json({ message: "Test not found" });
     }
+    emitAdmin("admin:tests.updated", { action: "deleted", testId: String(deleted._id) });
+    emitAdminDataChanged({ source: "test_deleted", testId: String(deleted._id) });
     return res.json({ message: "Test deleted" });
   } catch (error) {
     return res.status(500).json({ message: "Failed to delete test" });
@@ -293,3 +303,6 @@ module.exports = {
   updateTestStatus,
   deleteTest,
 };
+
+
+

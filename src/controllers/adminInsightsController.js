@@ -7,6 +7,7 @@ const {
   loadCandidates,
   loadViolations,
 } = require("../services/adminInsightsService");
+const { emitAdmin, emitAdminDataChanged } = require("../realtime/socketServer");
 
 async function getDashboardData(req, res) {
   try {
@@ -55,6 +56,18 @@ async function saveReviewDecision(req, res) {
       userId: req.user._id,
       submissionId: req.params.submissionId,
       payload: req.body,
+    });
+    emitAdmin("admin:reviews.updated", {
+      action: "decision_saved",
+      submissionId: String(req.params.submissionId || ""),
+    });
+    emitAdmin("admin:candidates.updated", {
+      action: "review_decision_saved",
+      submissionId: String(req.params.submissionId || ""),
+    });
+    emitAdminDataChanged({
+      source: "review_decision_saved",
+      submissionId: String(req.params.submissionId || ""),
     });
     return res.json(data);
   } catch (error) {

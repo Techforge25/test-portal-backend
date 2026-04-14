@@ -1,4 +1,5 @@
 const AdminNotification = require("../models/AdminNotification");
+const { emitAdmin } = require("../realtime/socketServer");
 
 function toNotificationRow(notification, currentUserId) {
   const readBy = Array.isArray(notification.readBy) ? notification.readBy : [];
@@ -56,6 +57,11 @@ async function markNotificationRead(req, res) {
     if (!updated) {
       return res.status(404).json({ message: "Notification not found" });
     }
+    emitAdmin("admin:notifications.updated", {
+      action: "marked_read",
+      notificationId: String(updated._id),
+      userId: String(req.user?._id || ""),
+    });
 
     return res.json({
       message: "Notification marked as read",
@@ -69,6 +75,10 @@ async function markNotificationRead(req, res) {
 async function markAllNotificationsRead(req, res) {
   try {
     await AdminNotification.updateMany({}, { $addToSet: { readBy: req.user._id } });
+    emitAdmin("admin:notifications.updated", {
+      action: "marked_all_read",
+      userId: String(req.user?._id || ""),
+    });
     return res.json({ message: "All notifications marked as read" });
   } catch {
     return res.status(500).json({ message: "Failed to update notifications" });
