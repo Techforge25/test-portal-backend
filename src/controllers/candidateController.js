@@ -17,6 +17,7 @@ const {
   processSubmissionCodingEvaluation,
   executeCode,
 } = require("../services/codingEvaluationService");
+const { isCloudinaryReady, uploadBase64Image } = require("../services/cloudinaryService");
 const { enqueueCodingEvaluation } = require("../jobs/codingEvaluationQueue");
 const {
   parsePositiveInt,
@@ -42,6 +43,19 @@ const MANUAL_REVIEW_KEYS = new Set([
   "bug_report",
   "test_case",
 ]);
+
+function extractBase64Bytes(dataUrl) {
+  const base64Payload = String(dataUrl || "").split(",")[1] || "";
+  const uploadBytes = Buffer.byteLength(base64Payload, "base64");
+  return Number.isFinite(uploadBytes) ? uploadBytes : 0;
+}
+
+function sanitizePublicIdPart(fileName, fallback) {
+  const value = String(fileName || "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 32);
+  return value || fallback;
+}
 
 function parseUiPreviewPayload(rawAnswer) {
   try {
@@ -533,6 +547,51 @@ async function runCode(req, res) {
   }
 }
 
+async function uploadCkeditorImage(req, res) {
+  try {
+    const { submissionId } = req.params;
+    const { dataUrl, fileName } = req.body || {};
+    if (typeof dataUrl !== "string" || !dataUrl.trim()) {
+      return res.status(400).json({ message: "dataUrl is required" });
+    }
+    if (!/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(dataUrl)) {
+      return res.status(400).json({ message: "Only base64 image data URLs are allowed" });
+    }
+
+    const maxBytes = parsePositiveInt(process.env.CKEDITOR_IMAGE_UPLOAD_MAX_BYTES, 2_000_000);
+    const uploadBytes = extractBase64Bytes(dataUrl);
+    if (!uploadBytes) {
+      return res.status(400).json({ message: "Invalid image payload" });
+    }
+    if (uploadBytes > maxBytes) {
+      return res.status(400).json({ message: `Image is too large. Max allowed is ${maxBytes} bytes` });
+    }
+
+    if (!isCloudinaryReady()) {
+      return res.status(500).json({
+        message:
+          "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.",
+      });
+    }
+
+    const upload = await uploadBase64Image(dataUrl, {
+      folder:
+        process.env.CLOUDINARY_CANDIDATE_CKEDITOR_IMAGE_FOLDER ||
+        process.env.CLOUDINARY_CKEDITOR_IMAGE_FOLDER ||
+        "test-portal/candidate-ckeditor-image",
+      publicIdPrefix: `candidate-${submissionId}-${sanitizePublicIdPart(fileName, "image")}`,
+    });
+
+    return res.json({
+      message: "Image uploaded successfully",
+      url: upload.url,
+      publicId: upload.publicId,
+    });
+  } catch {
+    return res.status(500).json({ message: "Failed to upload image" });
+  }
+}
+
 module.exports = {
   getTestByPasscode,
   getCandidateProfilePrefill,
@@ -542,6 +601,7 @@ module.exports = {
   getEvaluationStatus,
   logViolation,
   runCode,
+  uploadCkeditorImage,
   // used by queue inline worker bootstrap
   processSubmissionCodingEvaluation,
 };

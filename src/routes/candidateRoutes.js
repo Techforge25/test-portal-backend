@@ -8,6 +8,7 @@ const {
   getEvaluationStatus,
   logViolation,
   runCode,
+  uploadCkeditorImage,
 } = require("../controllers/candidateController");
 const { requireCandidateSubmissionAuth } = require("../middleware/candidateSessionAuth");
 const { createRateLimiter } = require("../middleware/rateLimit");
@@ -32,5 +33,6 @@ router.post("/submission/:submissionId/submit", requireCandidateSubmissionAuth, 
 router.get("/submission/:submissionId/evaluation-status", requireCandidateSubmissionAuth, getEvaluationStatus);
 router.post("/submission/:submissionId/violation", requireCandidateSubmissionAuth, logViolation);
 router.post("/submission/:submissionId/run-code", runCodeRateLimit, requireCandidateSubmissionAuth, runCode);
+router.post("/submission/:submissionId/uploads/ckeditor-image", requireCandidateSubmissionAuth, uploadCkeditorImage);
 
 module.exports = router;

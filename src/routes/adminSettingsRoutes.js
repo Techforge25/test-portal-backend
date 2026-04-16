@@ -6,6 +6,7 @@ const {
   getSecurityDefaults,
   updateSecurityDefaults,
   uploadUiPreviewImage,
+  uploadCkeditorImage,
   uploadUiTaskPdf,
 } = require("../controllers/adminSettingsController");
 const {
@@ -23,6 +24,8 @@ router.patch("/settings/notifications", updateNotificationSettings);
 router.get("/settings/security-defaults", getSecurityDefaults);
 router.patch("/settings/security-defaults", updateSecurityDefaults);
 router.post("/settings/uploads/ui-preview-image", uploadUiPreviewImage);
+router.post("/settings/uploads/ckeditor-image", uploadCkeditorImage);
+router.post("/uploads/ckeditor-image", uploadCkeditorImage);
 router.post("/settings/uploads/ui-task-pdf", uploadUiTaskPdf);
 router.get("/notifications", listNotifications);
 router.patch("/notifications/read-all", markAllNotificationsRead);

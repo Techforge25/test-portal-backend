@@ -161,6 +161,43 @@ async function uploadUiPreviewImage(req, res) {
   }
 }
 
+async function uploadCkeditorImage(req, res) {
+  try {
+    const { dataUrl, fileName } = req.body || {};
+    if (typeof dataUrl !== "string" || !dataUrl.trim()) {
+      return res.status(400).json({ message: "dataUrl is required" });
+    }
+
+    if (!/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(dataUrl)) {
+      return res.status(400).json({ message: "Only base64 image data URLs are allowed" });
+    }
+
+    const maxBytes = parsePositiveInt(process.env.CKEDITOR_IMAGE_UPLOAD_MAX_BYTES, 2_000_000);
+    const uploadBytes = extractBase64Bytes(dataUrl);
+    if (!uploadBytes) {
+      return res.status(400).json({ message: "Invalid image payload" });
+    }
+    if (uploadBytes > maxBytes) {
+      return res.status(400).json({ message: `Image is too large. Max allowed is ${maxBytes} bytes` });
+    }
+
+    if (!requireCloudinary(res)) return;
+
+    const upload = await uploadBase64Image(dataUrl, {
+      folder: process.env.CLOUDINARY_CKEDITOR_IMAGE_FOLDER || "test-portal/ckeditor-image",
+      publicIdPrefix: `ckeditor-${sanitizePublicIdPart(fileName, "image")}`,
+    });
+
+    return res.json({
+      message: "Image uploaded successfully",
+      url: upload.url,
+      publicId: upload.publicId,
+    });
+  } catch {
+    return res.status(500).json({ message: "Failed to upload image" });
+  }
+}
+
 async function uploadUiTaskPdf(req, res) {
   try {
     const { dataUrl, fileName } = req.body || {};
@@ -203,5 +240,6 @@ module.exports = {
   getSecurityDefaults,
   updateSecurityDefaults,
   uploadUiPreviewImage,
+  uploadCkeditorImage,
   uploadUiTaskPdf,
 };
